@@ -16,6 +16,11 @@
 
 import tensorflow as tf
 
+FLAGS = flags.FLAGS
+flags.DEFINE_float(
+      "b", 1.1,
+      "The Hinge Loss parameter")
+
 
 class BaseLoss(object):
   """Inherit from this class when implementing new losses."""
@@ -59,16 +64,15 @@ class HingeLoss(BaseLoss):
   and +1.
   """
 
-  def calculate_loss(self, predictions, labels, b=1.0, **unused_params):
+  def calculate_loss(self, predictions, labels, b=FLAGS.b, **unused_params):
     with tf.name_scope("loss_hinge"):
       float_labels = tf.cast(labels, tf.float32)
       all_zeros = tf.zeros(tf.shape(float_labels), dtype=tf.float32)
       all_ones = tf.ones(tf.shape(float_labels), dtype=tf.float32)
       sign_labels = tf.subtract(tf.scalar_mul(2, float_labels), all_ones)
-      hinge_loss = tf.maximum(
-          all_zeros, tf.scalar_mul(b, all_ones) - sign_labels * predictions)
+      hinge_loss = tf.square(tf.maximum(
+          all_zeros, tf.scalar_mul(b, all_ones) - sign_labels * predictions))
       return tf.reduce_mean(tf.reduce_sum(hinge_loss, 1))
-
 
 class SoftmaxLoss(BaseLoss):
   """Calculate the softmax loss between the predictions and labels.

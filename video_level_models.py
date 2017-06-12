@@ -18,6 +18,7 @@ import math
 import models
 import tensorflow as tf
 import utils
+import numpy as np
 
 from tensorflow import flags
 import tensorflow.contrib.slim as slim
@@ -43,6 +44,18 @@ class LogisticModel(models.BaseModel):
       batch_size x num_classes."""
     output = slim.fully_connected(
         model_input, vocab_size, activation_fn=tf.nn.sigmoid,
+        weights_regularizer=slim.l2_regularizer(l2_penalty))
+    return {"predictions": output}
+
+class SVM(models.BaseModel):
+  def create_model(self,
+                   model_input,
+                   vocab_size,
+                   num_mixtures=None,
+                   l2_penalty=1e-8,
+                   **unused_params):
+    output = slim.fully_connected(
+        model_input, vocab_size, activation_fn=None,
         weights_regularizer=slim.l2_regularizer(l2_penalty))
     return {"predictions": output}
 
@@ -75,13 +88,16 @@ class MoeModel(models.BaseModel):
     """
     num_mixtures = num_mixtures or FLAGS.moe_num_mixtures
 
+    # this is a linear model after its reshaped
     gate_activations = slim.fully_connected(
         model_input,
         vocab_size * (num_mixtures + 1),
         activation_fn=None,
         biases_initializer=None,
+        #weights_initializer=tf.truncated_normal_initializer(stddev=0.01),
         weights_regularizer=slim.l2_regularizer(l2_penalty),
         scope="gates")
+    #this is actually output after its reshaped
     expert_activations = slim.fully_connected(
         model_input,
         vocab_size * num_mixtures,
@@ -89,9 +105,11 @@ class MoeModel(models.BaseModel):
         weights_regularizer=slim.l2_regularizer(l2_penalty),
         scope="experts")
 
+    #softmax
     gating_distribution = tf.nn.softmax(tf.reshape(
         gate_activations,
         [-1, num_mixtures + 1]))  # (Batch * #Labels) x (num_mixtures + 1)
+    # linear logistic model
     expert_distribution = tf.nn.sigmoid(tf.reshape(
         expert_activations,
         [-1, num_mixtures]))  # (Batch * #Labels) x num_mixtures
@@ -101,3 +119,48 @@ class MoeModel(models.BaseModel):
     final_probabilities = tf.reshape(final_probabilities_by_class_and_batch,
                                      [-1, vocab_size])
     return {"predictions": final_probabilities}
+
+class SVMMoeModel(models.BaseModel):
+  def create_model(self,
+                   model_input,
+                   vocab_size,
+                   num_mixtures=None,
+                   l2_penalty=1e-5,
+                   **unused_params):
+    num_mixtures = num_mixtures or FLAGS.moe_num_mixtures
+
+    weights_initializer = tf.truncated_normal_initializer(stddev=0.01)
+
+    # this is a linear model after its reshaped
+    gate_activations = slim.fully_connected(
+        model_input,
+        vocab_size * (num_mixtures + 1),  
+        activation_fn=tf.nn.relu,
+        biases_initializer=None,
+        weights_initializer=tf.truncated_normal_initializer(stddev=0.01),
+        weights_regularizer=slim.l2_regularizer(l2_penalty),
+        scope="gates")
+    #this is actually output after its reshaped
+    expert_activations = slim.fully_connected(
+        model_input,
+        vocab_size * num_mixtures,
+        activation_fn=None,
+        weights_regularizer=slim.l2_regularizer(l2_penalty),
+        scope="experts")
+
+    #softmax
+    gating_distribution = tf.nn.sigmoid(tf.reshape(
+        gate_activations,
+        [-1, num_mixtures + 1]))  # (Batch * #Labels) x (num_mixtures + 1)
+    # linear model
+    expert_distribution = tf.reshape(
+        expert_activations,
+        [-1, num_mixtures])   # (Batch * #Labels) x num_mixtures
+    
+
+    final_probabilities_by_class_and_batch = tf.reduce_sum(
+        gating_distribution[:, :num_mixtures] * expert_distribution, 1)
+    final_probabilities = tf.reshape(final_probabilities_by_class_and_batch,
+                                     [-1, vocab_size])
+    return {"predictions": final_probabilities}
+
